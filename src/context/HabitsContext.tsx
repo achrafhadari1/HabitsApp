@@ -7,17 +7,37 @@ import {
   SleepEntry,
   WeightEntry,
   HabitsContextType,
+  UserProfile,
+  AppSettings,
 } from "../types";
+import {
+  getCurrentDateString,
+  getDateString,
+  shouldTrackHabitOnDate,
+  isHabitCompletedForPeriod,
+  getHabitStreak,
+} from "../utils/scheduleUtils";
 
-// Sample habit to show when no habits exist
-const getSampleHabit = (): Habit => ({
-  id: "water",
-  name: "Water",
-  icon: "Droplets",
-  target: 10,
-  unit: "glasses",
-  entries: {},
-});
+// Default user profile and settings
+const defaultProfile: UserProfile = {
+  name: "Martin Kenter",
+  joinDate: format(new Date(), "yyyy-MM-dd"),
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+};
+
+const defaultSettings: AppSettings = {
+  notifications: {
+    enabled: true,
+    reminderTime: "09:00",
+    soundEnabled: true,
+  },
+  theme: "light",
+  weekStartsOn: 1, // Monday
+  units: {
+    weight: "kg",
+    distance: "km",
+  },
+};
 
 // Context creation
 const HabitsContext = createContext<HabitsContextType | undefined>(undefined);
@@ -31,6 +51,8 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [sleepData, setSleepData] = useState<SleepEntry[]>([]);
   const [weightData, setWeightData] = useState<WeightEntry[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile>(defaultProfile);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
 
   // Load data from AsyncStorage on component mount
   useEffect(() => {
@@ -40,22 +62,24 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
         const savedMoments = await AsyncStorage.getItem("memorableMoments");
         const savedSleep = await AsyncStorage.getItem("sleepData");
         const savedWeight = await AsyncStorage.getItem("weightData");
+        const savedProfile = await AsyncStorage.getItem("userProfile");
+        const savedSettings = await AsyncStorage.getItem("appSettings");
 
         if (savedHabits) {
           const parsedHabits = JSON.parse(savedHabits);
-          setHabits(
-            parsedHabits.length > 0 ? parsedHabits : [getSampleHabit()]
-          );
+          setHabits(parsedHabits);
         } else {
-          setHabits([getSampleHabit()]);
+          setHabits([]);
         }
 
         if (savedMoments) setMemorableMoments(JSON.parse(savedMoments));
         if (savedSleep) setSleepData(JSON.parse(savedSleep));
         if (savedWeight) setWeightData(JSON.parse(savedWeight));
+        if (savedProfile) setUserProfile(JSON.parse(savedProfile));
+        if (savedSettings) setSettings(JSON.parse(savedSettings));
       } catch (error) {
         console.error("Error loading data:", error);
-        setHabits([getSampleHabit()]);
+        setHabits([]);
       }
     };
 
@@ -71,7 +95,7 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
         console.error("Error saving habits:", error);
       }
     };
-    if (habits.length > 0) saveHabits();
+    saveHabits();
   }, [habits]);
 
   useEffect(() => {
@@ -140,11 +164,18 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
     setHabits((prev) =>
       prev.map((habit) => {
         if (habit.id === id) {
+          // Check if the habit should be tracked on this date
+          const dateObj = new Date(date);
+          if (!shouldTrackHabitOnDate(habit, dateObj)) {
+            console.warn(`Habit ${habit.name} is not scheduled for ${date}`);
+            return habit; // Don't update if not scheduled
+          }
+
           return {
             ...habit,
             entries: {
               ...habit.entries,
-              [date]: value,
+              [date]: Math.max(0, value), // Ensure non-negative values
             },
           };
         }
@@ -215,27 +246,21 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
     const habit = habits.find((h) => h.id === id);
     if (!habit) return 0;
 
-    let streak = 0;
-    const today = new Date();
+    return getHabitStreak(habit);
+  };
 
-    for (let i = 0; i < 100; i++) {
-      // Limit to prevent infinite loop
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateStr = format(date, "yyyy-MM-dd");
+  const shouldTrackHabitToday = (id: string) => {
+    const habit = habits.find((h) => h.id === id);
+    if (!habit) return false;
 
-      if (
-        habit.entries[dateStr] !== undefined &&
-        habit.entries[dateStr] >= habit.target
-      ) {
-        streak++;
-      } else if (i > 0) {
-        // Don't break on the first day (today) if it's not yet completed
-        break;
-      }
-    }
+    return shouldTrackHabitOnDate(habit, new Date());
+  };
 
-    return streak;
+  const isHabitCompletedToday = (id: string) => {
+    const habit = habits.find((h) => h.id === id);
+    if (!habit) return false;
+
+    return isHabitCompletedForPeriod(habit, new Date());
   };
 
   const getSleepStats = () => {
@@ -279,6 +304,72 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   };
 
+  // New quick complete function for better UX
+  const completeHabit = (id: string, date: string, value?: number) => {
+    const habit = habits.find((h) => h.id === id);
+    if (!habit) return;
+
+    // Check if the habit should be tracked on this date
+    const dateObj = new Date(date);
+    if (!shouldTrackHabitOnDate(habit, dateObj)) {
+      console.warn(`Habit ${habit.name} is not scheduled for ${date}`);
+      return;
+    }
+
+    let completionValue: number;
+
+    switch (habit.trackingType) {
+      case "completion":
+        completionValue = habit.target; // Mark as complete
+        break;
+      case "duration":
+      case "quantity":
+        completionValue = value || habit.target; // Use provided value or target
+        break;
+      case "increment":
+        completionValue = (habit.entries[date] || 0) + (value || 1); // Add to existing
+        break;
+      default:
+        completionValue = value || habit.target;
+    }
+
+    updateHabitEntry(id, date, completionValue);
+  };
+
+  // Profile and settings management
+  const updateUserProfile = (profileData: Partial<UserProfile>) => {
+    const updatedProfile = { ...userProfile, ...profileData };
+    setUserProfile(updatedProfile);
+    AsyncStorage.setItem("userProfile", JSON.stringify(updatedProfile));
+  };
+
+  const updateSettings = (settingsData: Partial<AppSettings>) => {
+    const updatedSettings = { ...settings, ...settingsData };
+    setSettings(updatedSettings);
+    AsyncStorage.setItem("appSettings", JSON.stringify(updatedSettings));
+  };
+
+  const clearAllData = async () => {
+    try {
+      await AsyncStorage.multiRemove([
+        "habits",
+        "memorableMoments",
+        "sleepData",
+        "weightData",
+        "userProfile",
+        "appSettings",
+      ]);
+      setHabits([]);
+      setMemorableMoments([]);
+      setSleepData([]);
+      setWeightData([]);
+      setUserProfile(defaultProfile);
+      setSettings(defaultSettings);
+    } catch (error) {
+      console.error("Error clearing data:", error);
+    }
+  };
+
   return (
     <HabitsContext.Provider
       value={{
@@ -286,16 +377,24 @@ export const HabitsProvider: React.FC<{ children: React.ReactNode }> = ({
         memorableMoments,
         sleepData,
         weightData,
+        userProfile,
+        settings,
         addHabit,
         updateHabit,
         updateHabitEntry,
+        completeHabit,
         removeHabit,
         addMemorableMoment,
         addSleepEntry,
         addWeightEntry,
         getHabitById,
         getStreakForHabit,
+        shouldTrackHabitToday,
+        isHabitCompletedToday,
         getSleepStats,
+        updateUserProfile,
+        updateSettings,
+        clearAllData,
       }}
     >
       {children}

@@ -16,6 +16,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useHabits } from "../context/HabitsContext";
 import { RootStackParamList } from "../navigation/AppNavigator";
 import AddHabitModal from "../components/AddHabitModal";
+import {
+  getCurrentDateString,
+  shouldTrackHabitOnDate,
+  isHabitCompletedForPeriod,
+  getHabitProgressText,
+  getScheduleDisplayText,
+} from "../utils/scheduleUtils";
 
 type DashboardNavigationProp = StackNavigationProp<
   RootStackParamList,
@@ -23,28 +30,36 @@ type DashboardNavigationProp = StackNavigationProp<
 >;
 
 const DashboardScreen: React.FC = () => {
-  const { habits, sleepData } = useHabits();
+  const { habits, sleepData, userProfile } = useHabits();
   const navigation = useNavigation<DashboardNavigationProp>();
   const [showAddModal, setShowAddModal] = useState(false);
   const today = new Date();
-  const formattedToday = format(today, "yyyy-MM-dd");
+  const formattedToday = getCurrentDateString();
 
-  // Filter for completed habits today
-  const completedHabits = habits.filter(
-    (habit) =>
-      habit.entries[formattedToday] &&
-      habit.entries[formattedToday] >= habit.target
+  // Filter habits that should be tracked today
+  const trackableHabits = habits.filter((habit) =>
+    shouldTrackHabitOnDate(habit, today)
   );
 
-  // Find ongoing habits (not completed)
-  const ongoingHabits = habits.filter(
-    (habit) =>
-      !habit.entries[formattedToday] ||
-      habit.entries[formattedToday] < habit.target
+  // Filter for completed habits today (considering their schedule)
+  const completedHabits = trackableHabits.filter((habit) =>
+    isHabitCompletedForPeriod(habit, today)
   );
 
-  const renderHabitCard = (habit: any) => {
+  // Find ongoing habits (trackable but not completed)
+  const ongoingHabits = trackableHabits.filter(
+    (habit) => !isHabitCompletedForPeriod(habit, today)
+  );
+
+  // Habits not scheduled for today
+  const notScheduledHabits = habits.filter(
+    (habit) => !shouldTrackHabitOnDate(habit, today)
+  );
+
+  const renderHabitCard = (habit: any, isScheduled: boolean = true) => {
     const currentValue = habit.entries[formattedToday] || 0;
+    const progressText = getHabitProgressText(habit, today);
+    const scheduleText = getScheduleDisplayText(habit);
     const isNoSmoking =
       habit.name.toLowerCase().includes("cigarette") ||
       habit.name.toLowerCase().includes("smoke");
@@ -66,9 +81,10 @@ const DashboardScreen: React.FC = () => {
             <Ionicons name="ban" size={20} color="white" />
             <Text style={styles.noCigaretteText}>no cigarettes</Text>
           </View>
-          <Text style={styles.noCigaretteProgress}>
-            {currentValue} / {habit.target} days
-          </Text>
+          <Text style={styles.noCigaretteProgress}>{progressText}</Text>
+          {!isScheduled && (
+            <Text style={styles.scheduleInfo}>{scheduleText}</Text>
+          )}
         </TouchableOpacity>
       );
     } else if (isYoga) {
@@ -85,7 +101,9 @@ const DashboardScreen: React.FC = () => {
               <Ionicons name="fitness" size={20} color="#92400e" />
               <Text style={styles.yogaText}>yoga</Text>
             </View>
-            <Text style={styles.yogaTime}>{habit.target} min</Text>
+            <Text style={styles.yogaTime}>
+              {isScheduled ? `${habit.target} min` : progressText}
+            </Text>
           </View>
         </TouchableOpacity>
       );
@@ -107,7 +125,9 @@ const DashboardScreen: React.FC = () => {
             <View style={styles.waterStat}>
               <Text style={styles.waterStatLabel}>glasses</Text>
               <Text style={styles.waterStatValue}>
-                {currentValue} / {habit.target}
+                {isScheduled
+                  ? `${currentValue} / ${habit.target}`
+                  : progressText}
               </Text>
             </View>
             <View style={styles.waterStat}>
@@ -136,8 +156,11 @@ const DashboardScreen: React.FC = () => {
               <Text style={styles.defaultText}>{habit.name.toLowerCase()}</Text>
             </View>
             <Text style={styles.defaultTarget}>
-              {habit.target} {habit.unit}
+              {isScheduled ? `${habit.target} ${habit.unit}` : progressText}
             </Text>
+            {!isScheduled && (
+              <Text style={styles.scheduleInfo}>{scheduleText}</Text>
+            )}
           </View>
         </TouchableOpacity>
       );
@@ -147,6 +170,7 @@ const DashboardScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <View style={styles.statusBarSpacer} />
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -163,16 +187,47 @@ const DashboardScreen: React.FC = () => {
               />
             </View>
             <View>
-              <Text style={styles.greeting}>morning,</Text>
-              <Text style={styles.name}>Martin Kenter</Text>
+              <Text style={styles.greeting}>
+                {new Date().getHours() < 12
+                  ? "morning"
+                  : new Date().getHours() < 18
+                  ? "afternoon"
+                  : "evening"}
+                ,
+              </Text>
+              <Text style={styles.name}>{userProfile.name}</Text>
             </View>
           </View>
-          <TouchableOpacity
-            onPress={() => setShowAddModal(true)}
-            style={styles.addButton}
-          >
-            <Ionicons name="add" size={16} color="#374151" />
-          </TouchableOpacity>
+          <View style={styles.headerButtons}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("CompletedHabits")}
+              style={styles.headerButton}
+            >
+              <Ionicons
+                name="checkmark-done-outline"
+                size={16}
+                color="#374151"
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("Stats")}
+              style={styles.headerButton}
+            >
+              <Ionicons name="analytics-outline" size={16} color="#374151" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("Settings")}
+              style={styles.headerButton}
+            >
+              <Ionicons name="settings-outline" size={16} color="#374151" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowAddModal(true)}
+              style={styles.headerButton}
+            >
+              <Ionicons name="add" size={16} color="#374151" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.divider} />
@@ -182,10 +237,47 @@ const DashboardScreen: React.FC = () => {
           <Text style={styles.trackLabel}>track</Text>
           <Text style={styles.title}>your habits</Text>
 
+          {/* Quick Stats */}
+          <View style={styles.quickStats}>
+            <View style={styles.quickStatCard}>
+              <Text style={styles.quickStatValue}>
+                {Math.round(
+                  (completedHabits.length / trackableHabits.length) * 100
+                ) || 0}
+                %
+              </Text>
+              <Text style={styles.quickStatLabel}>Today</Text>
+            </View>
+            <View style={styles.quickStatCard}>
+              <Text style={styles.quickStatValue}>
+                {trackableHabits.length}
+              </Text>
+              <Text style={styles.quickStatLabel}>Active</Text>
+            </View>
+            <View style={styles.quickStatCard}>
+              <Text style={styles.quickStatValue}>
+                {completedHabits.length}
+              </Text>
+              <Text style={styles.quickStatLabel}>Done</Text>
+            </View>
+          </View>
+
           {/* Ongoing Habits */}
           <View style={styles.habitsContainer}>
-            {ongoingHabits.map(renderHabitCard)}
+            {ongoingHabits.map((habit) => renderHabitCard(habit, true))}
           </View>
+
+          {/* Not Scheduled Today */}
+          {notScheduledHabits.length > 0 && (
+            <View style={styles.notScheduledSection}>
+              <Text style={styles.notScheduledTitle}>Not scheduled today</Text>
+              <View style={styles.habitsContainer}>
+                {notScheduledHabits.map((habit) =>
+                  renderHabitCard(habit, false)
+                )}
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Sleep Tracker Section */}
@@ -270,6 +362,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#ffffff",
   },
+  statusBarSpacer: {
+    height: 20, // Extra space below status bar
+  },
   scrollView: {
     flex: 1,
   },
@@ -308,7 +403,11 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: "#111827",
   },
-  addButton: {
+  headerButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  headerButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -367,7 +466,9 @@ const styles = StyleSheet.create({
   yogaCard: {
     padding: 16,
     borderRadius: 12,
-    backgroundColor: "#fef3c7",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
   habitCardContent: {
     flexDirection: "row",
@@ -388,10 +489,12 @@ const styles = StyleSheet.create({
   waterCard: {
     padding: 16,
     borderRadius: 12,
-    backgroundColor: "#dbeafe",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
   waterText: {
-    color: "#1e40af",
+    color: "#374151",
     fontWeight: "300",
     marginLeft: 8,
     fontSize: 16,
@@ -417,7 +520,9 @@ const styles = StyleSheet.create({
   defaultCard: {
     padding: 16,
     borderRadius: 12,
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
   defaultText: {
     color: "#374151",
@@ -545,6 +650,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6b7280",
     fontWeight: "300",
+  },
+  notScheduledSection: {
+    marginTop: 24,
+  },
+  notScheduledTitle: {
+    fontSize: 16,
+    fontWeight: "300",
+    color: "#6b7280",
+    marginBottom: 12,
+  },
+  scheduleInfo: {
+    fontSize: 12,
+    color: "#9ca3af",
+    fontWeight: "300",
+    marginTop: 4,
+  },
+  quickStats: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  quickStatCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  quickStatValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 2,
+  },
+  quickStatLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontWeight: "500",
   },
 });
 

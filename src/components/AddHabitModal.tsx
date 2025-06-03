@@ -11,29 +11,14 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useHabits } from "../context/HabitsContext";
-
-const ICON_OPTIONS = [
-  { name: "Droplets", icon: "water" },
-  { name: "Dumbbell", icon: "barbell" },
-  { name: "StretchHorizontal", icon: "body" },
-  { name: "BookOpen", icon: "book" },
-  { name: "Moon", icon: "moon" },
-  { name: "Apple", icon: "nutrition" },
-  { name: "Coffee", icon: "cafe" },
-  { name: "Move", icon: "walk" },
-  { name: "Brain", icon: "bulb" },
-  { name: "Pill", icon: "medical" },
-  { name: "Activity", icon: "pulse" },
-  { name: "ShowerHead", icon: "water" },
-  { name: "Ban", icon: "ban" },
-];
-
-const HABIT_TEMPLATES = [
-  { name: "Water", icon: "Droplets", target: 10, unit: "glasses" },
-  { name: "Yoga", icon: "StretchHorizontal", target: 30, unit: "min" },
-  { name: "No cigarettes", icon: "Ban", target: 21, unit: "days" },
-  { name: "Morning exercises", icon: "Dumbbell", target: 15, unit: "min" },
-];
+import { createHabitSchedule } from "../utils/scheduleUtils";
+import {
+  HABIT_TEMPLATES,
+  HABIT_CATEGORIES,
+  getHabitsByCategory,
+  getTrackingTypeDescription,
+} from "../utils/habitTemplates";
+import { HabitTrackingType } from "../types";
 
 interface AddHabitModalProps {
   visible: boolean;
@@ -42,21 +27,57 @@ interface AddHabitModalProps {
 
 const AddHabitModal: React.FC<AddHabitModalProps> = ({ visible, onClose }) => {
   const { addHabit } = useHabits();
+
+  // State for habit creation
+  const [step, setStep] = useState<"template" | "custom" | "details">(
+    "template"
+  );
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
   const [name, setName] = useState("");
-  const [icon, setIcon] = useState("Droplets");
+  const [icon, setIcon] = useState("water");
   const [target, setTarget] = useState("1");
   const [unit, setUnit] = useState("times");
+  const [trackingType, setTrackingType] =
+    useState<HabitTrackingType>("increment");
+  const [isTargetFlexible, setIsTargetFlexible] = useState(false);
+  const [quickValues, setQuickValues] = useState<string>("");
   const [scheduleType, setScheduleType] = useState<
     "daily" | "weekly" | "custom"
   >("daily");
   const [frequency, setFrequency] = useState("2");
   const [selectedDays, setSelectedDays] = useState<number[]>([1, 3]); // Monday, Wednesday by default
 
-  const handleTemplateSelect = (template: (typeof HABIT_TEMPLATES)[0]) => {
+  const resetForm = () => {
+    setStep("template");
+    setSelectedCategory("");
+    setSelectedTemplate(null);
+    setName("");
+    setIcon("water");
+    setTarget("1");
+    setUnit("times");
+    setTrackingType("increment");
+    setIsTargetFlexible(false);
+    setQuickValues("");
+    setScheduleType("daily");
+    setFrequency("2");
+    setSelectedDays([1, 3]);
+  };
+
+  const handleTemplateSelect = (template: any) => {
+    setSelectedTemplate(template);
     setName(template.name);
     setIcon(template.icon);
     setTarget(template.target.toString());
     setUnit(template.unit);
+    setTrackingType(template.trackingType);
+    setIsTargetFlexible(template.isTargetFlexible || false);
+    setQuickValues(template.quickValues ? template.quickValues.join(", ") : "");
+    setStep("details");
+  };
+
+  const handleCustomHabit = () => {
+    setStep("custom");
   };
 
   const handleSubmit = () => {
@@ -65,43 +86,338 @@ const AddHabitModal: React.FC<AddHabitModalProps> = ({ visible, onClose }) => {
       return;
     }
 
+    // Validate schedule
+    if (
+      scheduleType === "weekly" &&
+      (parseInt(frequency) <= 0 || parseInt(frequency) > 7)
+    ) {
+      Alert.alert("Error", "Weekly frequency must be between 1 and 7 days.");
+      return;
+    }
+
+    if (scheduleType === "custom" && selectedDays.length === 0) {
+      Alert.alert(
+        "Error",
+        "Please select at least one day for custom schedule."
+      );
+      return;
+    }
+
     const newHabit: any = {
       name: name.trim(),
       icon,
       target: parseInt(target),
       unit: unit.trim() || "times",
+      trackingType,
+      isTargetFlexible,
     };
 
-    // Add schedule if not daily
-    if (scheduleType !== "daily") {
-      newHabit.schedule = {
-        type: scheduleType,
-        frequency: scheduleType === "weekly" ? parseInt(frequency) : undefined,
-        days: scheduleType === "custom" ? selectedDays : undefined,
-      };
+    // Add quick values if provided
+    if (quickValues.trim()) {
+      const values = quickValues
+        .split(",")
+        .map((v) => parseInt(v.trim()))
+        .filter((v) => !isNaN(v));
+      if (values.length > 0) {
+        newHabit.quickValues = values;
+      }
     }
 
+    // Create schedule using utility function
+    newHabit.schedule = createHabitSchedule(
+      scheduleType,
+      scheduleType === "weekly" ? parseInt(frequency) : undefined,
+      scheduleType === "custom" ? selectedDays : undefined
+    );
+
     addHabit(newHabit);
-
-    // Reset form
-    setName("");
-    setIcon("Droplets");
-    setTarget("1");
-    setUnit("times");
-    setScheduleType("daily");
-    setFrequency("2");
-    setSelectedDays([1, 3]);
-
+    resetForm();
     onClose();
   };
 
-  const toggleDay = (dayIndex: number) => {
-    if (selectedDays.includes(dayIndex)) {
-      setSelectedDays(selectedDays.filter((d) => d !== dayIndex));
-    } else {
-      setSelectedDays([...selectedDays, dayIndex]);
-    }
+  const handleClose = () => {
+    resetForm();
+    onClose();
   };
+
+  const toggleDay = (day: number) => {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()
+    );
+  };
+
+  const renderTemplateStep = () => (
+    <View style={styles.stepContainer}>
+      <Text style={styles.stepTitle}>Choose a Habit Template</Text>
+
+      <ScrollView style={styles.categoriesContainer}>
+        {HABIT_CATEGORIES.map((category) => (
+          <View key={category} style={styles.categorySection}>
+            <TouchableOpacity
+              style={styles.categoryHeader}
+              onPress={() =>
+                setSelectedCategory(
+                  selectedCategory === category ? "" : category
+                )
+              }
+            >
+              <Text style={styles.categoryTitle}>{category}</Text>
+              <Ionicons
+                name={
+                  selectedCategory === category
+                    ? "chevron-down"
+                    : "chevron-forward"
+                }
+                size={20}
+                color="#666"
+              />
+            </TouchableOpacity>
+
+            {selectedCategory === category && (
+              <View style={styles.templatesGrid}>
+                {getHabitsByCategory(category).map((template, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.templateCard}
+                    onPress={() => handleTemplateSelect(template)}
+                  >
+                    <Ionicons
+                      name={template.icon as any}
+                      size={24}
+                      color="#374151"
+                    />
+                    <Text style={styles.templateName}>{template.name}</Text>
+                    <Text style={styles.templateDetails}>
+                      {template.target} {template.unit}
+                    </Text>
+                    <Text style={styles.templateType}>
+                      {getTrackingTypeDescription(template.trackingType)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+        ))}
+      </ScrollView>
+
+      <TouchableOpacity style={styles.customButton} onPress={handleCustomHabit}>
+        <Ionicons name="add-outline" size={24} color="#374151" />
+        <Text style={styles.customButtonText}>Create Custom Habit</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderCustomStep = () => (
+    <View style={styles.stepContainer}>
+      <Text style={styles.stepTitle}>Create Custom Habit</Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Habit Name</Text>
+        <TextInput
+          style={styles.input}
+          value={name}
+          onChangeText={setName}
+          placeholder="Enter habit name"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Tracking Type</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.trackingTypes}
+        >
+          {(
+            [
+              "increment",
+              "completion",
+              "duration",
+              "quantity",
+            ] as HabitTrackingType[]
+          ).map((type) => (
+            <TouchableOpacity
+              key={type}
+              style={[
+                styles.trackingTypeButton,
+                trackingType === type && styles.trackingTypeButtonActive,
+              ]}
+              onPress={() => setTrackingType(type)}
+            >
+              <Text
+                style={[
+                  styles.trackingTypeText,
+                  trackingType === type && styles.trackingTypeTextActive,
+                ]}
+              >
+                {type.charAt(0).toUpperCase() + type.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <Text style={styles.trackingTypeDescription}>
+          {getTrackingTypeDescription(trackingType)}
+        </Text>
+      </View>
+
+      <View style={styles.row}>
+        <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
+          <Text style={styles.label}>Target</Text>
+          <TextInput
+            style={styles.input}
+            value={target}
+            onChangeText={setTarget}
+            placeholder="1"
+            keyboardType="numeric"
+          />
+        </View>
+        <View style={[styles.inputGroup, { flex: 1 }]}>
+          <Text style={styles.label}>Unit</Text>
+          <TextInput
+            style={styles.input}
+            value={unit}
+            onChangeText={setUnit}
+            placeholder="times"
+          />
+        </View>
+      </View>
+
+      {(trackingType === "duration" || trackingType === "quantity") && (
+        <View style={styles.inputGroup}>
+          <TouchableOpacity
+            style={styles.checkboxRow}
+            onPress={() => setIsTargetFlexible(!isTargetFlexible)}
+          >
+            <Ionicons
+              name={isTargetFlexible ? "checkbox" : "square-outline"}
+              size={24}
+              color="#374151"
+            />
+            <Text style={styles.checkboxLabel}>Allow exceeding target</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Quick Values (optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={quickValues}
+          onChangeText={setQuickValues}
+          placeholder="e.g., 250, 500, 1000"
+        />
+        <Text style={styles.inputHint}>
+          Comma-separated values for quick entry
+        </Text>
+      </View>
+
+      <TouchableOpacity
+        style={styles.nextButton}
+        onPress={() => setStep("details")}
+      >
+        <Text style={styles.nextButtonText}>Next: Schedule</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderDetailsStep = () => (
+    <View style={styles.stepContainer}>
+      <Text style={styles.stepTitle}>Schedule & Details</Text>
+
+      {selectedTemplate && (
+        <View style={styles.selectedTemplate}>
+          <Ionicons
+            name={selectedTemplate.icon as any}
+            size={32}
+            color="#374151"
+          />
+          <View style={styles.selectedTemplateInfo}>
+            <Text style={styles.selectedTemplateName}>{name}</Text>
+            <Text style={styles.selectedTemplateDetails}>
+              {target} {unit} • {getTrackingTypeDescription(trackingType)}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Schedule Type</Text>
+        <View style={styles.scheduleButtons}>
+          {[
+            { key: "daily", label: "Daily" },
+            { key: "weekly", label: "Weekly" },
+            { key: "custom", label: "Custom" },
+          ].map(({ key, label }) => (
+            <TouchableOpacity
+              key={key}
+              style={[
+                styles.scheduleButton,
+                scheduleType === key && styles.scheduleButtonActive,
+              ]}
+              onPress={() => setScheduleType(key as any)}
+            >
+              <Text
+                style={[
+                  styles.scheduleButtonText,
+                  scheduleType === key && styles.scheduleButtonTextActive,
+                ]}
+              >
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {scheduleType === "weekly" && (
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Times per week</Text>
+          <TextInput
+            style={styles.input}
+            value={frequency}
+            onChangeText={setFrequency}
+            placeholder="2"
+            keyboardType="numeric"
+          />
+        </View>
+      )}
+
+      {scheduleType === "custom" && (
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Select Days</Text>
+          <View style={styles.daysContainer}>
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+              (day, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    styles.dayButton,
+                    selectedDays.includes(index) && styles.dayButtonActive,
+                  ]}
+                  onPress={() => toggleDay(index)}
+                >
+                  <Text
+                    style={[
+                      styles.dayButtonText,
+                      selectedDays.includes(index) &&
+                        styles.dayButtonTextActive,
+                    ]}
+                  >
+                    {day}
+                  </Text>
+                </TouchableOpacity>
+              )
+            )}
+          </View>
+        </View>
+      )}
+
+      <TouchableOpacity style={styles.createButton} onPress={handleSubmit}>
+        <Text style={styles.createButtonText}>Create Habit</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <Modal
@@ -111,175 +427,32 @@ const AddHabitModal: React.FC<AddHabitModalProps> = ({ visible, onClose }) => {
     >
       <View style={styles.container}>
         <View style={styles.header}>
+          <TouchableOpacity onPress={handleClose}>
+            <Ionicons name="close" size={24} color="#374151" />
+          </TouchableOpacity>
           <Text style={styles.title}>Add New Habit</Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color="#000" />
-          </TouchableOpacity>
+          {step !== "template" && (
+            <TouchableOpacity
+              onPress={() =>
+                setStep(
+                  step === "details"
+                    ? selectedTemplate
+                      ? "template"
+                      : "custom"
+                    : "template"
+                )
+              }
+            >
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Templates */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Templates</Text>
-            <View style={styles.templatesGrid}>
-              {HABIT_TEMPLATES.map((template) => (
-                <TouchableOpacity
-                  key={template.name}
-                  onPress={() => handleTemplateSelect(template)}
-                  style={styles.templateButton}
-                >
-                  <Ionicons
-                    name={
-                      (ICON_OPTIONS.find((opt) => opt.name === template.icon)
-                        ?.icon as any) || "water"
-                    }
-                    size={18}
-                    color="#666"
-                  />
-                  <Text style={styles.templateText}>{template.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Icon Selection */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Icon</Text>
-            <View style={styles.iconsGrid}>
-              {ICON_OPTIONS.map((iconOption) => (
-                <TouchableOpacity
-                  key={iconOption.name}
-                  onPress={() => setIcon(iconOption.name)}
-                  style={[
-                    styles.iconButton,
-                    icon === iconOption.name && styles.iconButtonSelected,
-                  ]}
-                >
-                  <Ionicons
-                    name={iconOption.icon as any}
-                    size={20}
-                    color={icon === iconOption.name ? "#fff" : "#666"}
-                  />
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Habit Name */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Habit Name</Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="e.g., Drink Water"
-              style={styles.textInput}
-            />
-          </View>
-
-          {/* Target and Unit */}
-          <View style={styles.section}>
-            <View style={styles.row}>
-              <View style={styles.halfWidth}>
-                <Text style={styles.sectionTitle}>Target</Text>
-                <TextInput
-                  value={target}
-                  onChangeText={setTarget}
-                  placeholder="1"
-                  keyboardType="numeric"
-                  style={styles.textInput}
-                />
-              </View>
-              <View style={styles.halfWidth}>
-                <Text style={styles.sectionTitle}>Unit</Text>
-                <TextInput
-                  value={unit}
-                  onChangeText={setUnit}
-                  placeholder="times"
-                  style={styles.textInput}
-                />
-              </View>
-            </View>
-          </View>
-
-          {/* Schedule */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Schedule</Text>
-            <View style={styles.scheduleButtons}>
-              {["daily", "weekly", "custom"].map((type) => (
-                <TouchableOpacity
-                  key={type}
-                  onPress={() => setScheduleType(type as any)}
-                  style={[
-                    styles.scheduleButton,
-                    scheduleType === type && styles.scheduleButtonSelected,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.scheduleButtonText,
-                      scheduleType === type &&
-                        styles.scheduleButtonTextSelected,
-                    ]}
-                  >
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {scheduleType === "weekly" && (
-              <View style={styles.frequencySection}>
-                <Text style={styles.sectionTitle}>Times per week</Text>
-                <TextInput
-                  value={frequency}
-                  onChangeText={setFrequency}
-                  placeholder="2"
-                  keyboardType="numeric"
-                  style={styles.textInput}
-                />
-              </View>
-            )}
-
-            {scheduleType === "custom" && (
-              <View style={styles.daysSection}>
-                <Text style={styles.sectionTitle}>Select days</Text>
-                <View style={styles.daysGrid}>
-                  {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
-                    <TouchableOpacity
-                      key={day + index}
-                      onPress={() => toggleDay(index)}
-                      style={[
-                        styles.dayButton,
-                        selectedDays.includes(index) &&
-                          styles.dayButtonSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.dayButtonText,
-                          selectedDays.includes(index) &&
-                            styles.dayButtonTextSelected,
-                        ]}
-                      >
-                        {day}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            )}
-          </View>
+        <ScrollView style={styles.content}>
+          {step === "template" && renderTemplateStep()}
+          {step === "custom" && renderCustomStep()}
+          {step === "details" && renderDetailsStep()}
         </ScrollView>
-
-        {/* Action Buttons */}
-        <View style={styles.actions}>
-          <TouchableOpacity onPress={onClose} style={styles.cancelButton}>
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleSubmit} style={styles.createButton}>
-            <Text style={styles.createButtonText}>Create Habit</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </Modal>
   );
@@ -294,164 +467,252 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
+    padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: "#eee",
   },
   title: {
-    fontSize: 20,
-    fontWeight: "300",
+    fontSize: 18,
+    fontWeight: "600",
   },
-  closeButton: {
-    padding: 4,
+  backButton: {
+    color: "#374151",
+    fontSize: 16,
   },
   content: {
     flex: 1,
-    padding: 16,
   },
-  section: {
-    marginBottom: 24,
+  stepContainer: {
+    padding: 20,
   },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "300",
-    color: "#666",
-    marginBottom: 8,
+  stepTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  categoriesContainer: {
+    maxHeight: 400,
+  },
+  categorySection: {
+    marginBottom: 10,
+  },
+  categoryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 15,
+    backgroundColor: "#ffffff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  categoryTitle: {
+    fontSize: 16,
+    fontWeight: "600",
   },
   templatesGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    padding: 10,
   },
-  templateButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
-    borderRadius: 8,
-    backgroundColor: "#fff",
+  templateCard: {
     width: "48%",
-  },
-  templateText: {
-    marginLeft: 8,
-    fontSize: 14,
-    fontWeight: "300",
-  },
-  iconsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: "#f5f5f5",
-    justifyContent: "center",
+    margin: "1%",
+    padding: 15,
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#eee",
     alignItems: "center",
   },
-  iconButtonSelected: {
-    backgroundColor: "#000",
+  templateName: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 8,
+    textAlign: "center",
   },
-  textInput: {
+  templateDetails: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
+  },
+  templateType: {
+    fontSize: 10,
+    color: "#999",
+    marginTop: 2,
+    textAlign: "center",
+  },
+  customButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 15,
+    backgroundColor: "#ffffff",
+    borderRadius: 10,
+    marginTop: 20,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
+    borderColor: "#e5e7eb",
+  },
+  customButtonText: {
+    color: "#374151",
+    fontSize: 16,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ddd",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    fontWeight: "300",
-    backgroundColor: "#fff",
+  },
+  inputHint: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
   },
   row: {
     flexDirection: "row",
-    gap: 16,
   },
-  halfWidth: {
+  trackingTypes: {
+    marginBottom: 10,
+  },
+  trackingTypeButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  trackingTypeButtonActive: {
+    backgroundColor: "#374151",
+  },
+  trackingTypeText: {
+    color: "#666",
+    fontSize: 14,
+  },
+  trackingTypeTextActive: {
+    color: "#fff",
+  },
+  trackingTypeDescription: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+  },
+  checkboxRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    marginLeft: 8,
+  },
+  nextButton: {
+    backgroundColor: "#374151",
+    padding: 15,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 20,
+  },
+  nextButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  selectedTemplate: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 15,
+    backgroundColor: "#ffffff",
+    borderRadius: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  selectedTemplateInfo: {
+    marginLeft: 12,
     flex: 1,
+  },
+  selectedTemplateName: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  selectedTemplateDetails: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
   },
   scheduleButtons: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 16,
+    marginBottom: 10,
   },
   scheduleButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    flex: 1,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#ddd",
     borderRadius: 8,
-    backgroundColor: "#f5f5f5",
+    alignItems: "center",
+    marginRight: 8,
   },
-  scheduleButtonSelected: {
-    backgroundColor: "#000",
+  scheduleButtonActive: {
+    backgroundColor: "#374151",
+    borderColor: "#374151",
   },
   scheduleButtonText: {
-    fontSize: 14,
-    fontWeight: "300",
     color: "#666",
+    fontWeight: "600",
   },
-  scheduleButtonTextSelected: {
+  scheduleButtonTextActive: {
     color: "#fff",
   },
-  frequencySection: {
-    marginTop: 16,
-  },
-  daysSection: {
-    marginTop: 16,
-  },
-  daysGrid: {
+  daysContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
   },
   dayButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#f5f5f5",
-    justifyContent: "center",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#ddd",
     alignItems: "center",
+    justifyContent: "center",
   },
-  dayButtonSelected: {
-    backgroundColor: "#000",
+  dayButtonActive: {
+    backgroundColor: "#374151",
+    borderColor: "#374151",
   },
   dayButtonText: {
-    fontSize: 14,
-    fontWeight: "300",
     color: "#666",
+    fontSize: 12,
+    fontWeight: "600",
   },
-  dayButtonTextSelected: {
+  dayButtonTextActive: {
     color: "#fff",
-  },
-  actions: {
-    flexDirection: "row",
-    padding: 16,
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: "300",
-    color: "#666",
   },
   createButton: {
-    flex: 1,
-    paddingVertical: 12,
-    backgroundColor: "#000",
-    borderRadius: 8,
+    backgroundColor: "#374151",
+    padding: 15,
+    borderRadius: 10,
     alignItems: "center",
+    marginTop: 20,
   },
   createButtonText: {
-    fontSize: 16,
-    fontWeight: "300",
     color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });
 

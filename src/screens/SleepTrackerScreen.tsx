@@ -162,6 +162,7 @@ const SleepTrackerScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
+      <View style={styles.statusBarSpacer} />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#000" />
@@ -273,6 +274,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#fff",
+  },
+  statusBarSpacer: {
+    height: 20, // Extra space below status bar
   },
   header: {
     flexDirection: "row",
